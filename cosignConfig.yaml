@@ -1,0 +1,5 @@
+registry: hyperregistry.192.168.9.76.nip.io:30443
+image: library/alpine
+tag: 1
+signer: ck1
+secretKeyRef: k8s://cosign/cosign-key-secret
