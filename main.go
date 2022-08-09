@@ -2,22 +2,20 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
+	"crypto"
 	"fmt"
+	cosigns "github.com/cosign-verifier/pkg/cosign"
+	"github.com/cosign-verifier/pkg/kubernetes"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/pkg/errors"
 	"go.uber.org/zap/zapcore"
 	"io/ioutil"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	"strings"
 	"time"
 
-	"github.com/dlorenc/cosigned/pkg/cosigned"
-	"github.com/pkg/errors"
 	zaplogfmt "github.com/sykesm/zap-logfmt"
 	uzap "go.uber.org/zap"
 	"gopkg.in/yaml.v3"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -28,8 +26,6 @@ type CosignConfig struct {
 	Signer       string `yaml:"signer"`
 	SecretKeyRef string `yaml:"secretKeyRef"`
 }
-
-const KeyReference = "k8s://"
 
 var (
 	cosignConfig CosignConfig
@@ -54,55 +50,42 @@ func main() {
 	}
 	// Read k8s my clusters ...
 	logger.Info("Looking for kubernetes...")
-	kubeConfig := "/home/namgon/.kube/config"
-	config, err := clientcmd.BuildConfigFromFlags("", kubeConfig)
+	clientSet, err := kubernetes.GetClient()
 	if err != nil {
-		panic(err.Error())
-	}
-	clientSet, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 	// Read secret for cosign key
 	logger.Info("Looking for cosign key secret...")
-	namespace, name, err := parseRef(cosignConfig.SecretKeyRef)
+	secret, err := kubernetes.GetKeyPairSecret(clientSet, context.TODO(), cosignConfig.SecretKeyRef)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
-	secret, err := clientSet.CoreV1().Secrets(namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	// Get Public Key from Secret
+	keys, err := cosigns.GetPublicKey(secret.Data)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
-	if secret == nil {
-		logger.Error(errors.New("Empty"), "No keys configured")
-		return
-	}
-	keys := cosigned.Keys(secret.Data)
 	logger.Info("got keys", "cosign.pub", keys)
-	checkImg := fmt.Sprintf("%s/%s:%s", cosignConfig.Registry, cosignConfig.Image, cosignConfig.Tag)
-	if !valid(context.TODO(), checkImg, keys) {
+	// Valid Image
+	img := fmt.Sprintf("%s/%s:%s", cosignConfig.Registry, cosignConfig.Image, cosignConfig.Tag)
+	imgRef, err := name.ParseReference(img)
+	if err != nil {
+		panic(err)
+	}
+	if !valid(context.TODO(), imgRef, cosignConfig.Signer, keys) {
 		logger.Error(errors.New("Invalid"), "invalid signatures")
 	}
 }
 
-// the reference should be formatted as <namespace>/<secret name>
-func parseRef(k8sRef string) (string, string, error) {
-	s := strings.Split(strings.TrimPrefix(k8sRef, KeyReference), "/")
-	if len(s) != 2 {
-		return "", "", errors.New("kubernetes specification should be in the format k8s://<namespace>/<secret>")
-	}
-	return s[0], s[1], nil
-}
-
-func valid(ctx context.Context, img string, keys []*ecdsa.PublicKey) bool {
+func valid(ctx context.Context, imgRef name.Reference, signer string, keys []crypto.PublicKey) bool {
 	for _, k := range keys {
-		sps, err := cosigned.Signatures(ctx, img, k)
+		sps, err := cosigns.Valid(ctx, imgRef, signer, keys)
 		if err != nil {
-			logger.Error(err, "checking signatures", "image", img)
+			logger.Error(err, "checking signatures", "image", imgRef)
 			return false
 		}
 		if len(sps) > 0 {
-			logger.Info("valid signatures", "image", img, "key", k)
+			logger.Info("valid signatures", "image", imgRef, "key", k)
 			fmt.Println(sps)
 			return true
 		}
