@@ -6,9 +6,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func GetClient() (*kubernetes.Clientset, error) {
-	kubeConfig := "/home/namgon/.kube/config"
-	config, err := clientcmd.BuildConfigFromFlags("", kubeConfig)
+func GetClient(kubeCfg string) (*kubernetes.Clientset, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeCfg)
 	if err != nil {
 		return nil, errors.Wrap(err, "Build k8s Config Errors")
 	}
@@ -16,6 +15,5 @@ func GetClient() (*kubernetes.Clientset, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "New Client Set Errors")
 	}
-
 	return clientSet, nil
 }

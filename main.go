@@ -20,6 +20,7 @@ import (
 )
 
 type CosignConfig struct {
+	KubeConfig   string `yaml:"kubeConfig"`
 	Registry     string `yaml:"registry"`
 	Image        string `yaml:"image"`
 	Tag          string `yaml:"tag"`
@@ -50,7 +51,7 @@ func main() {
 	}
 	// Read k8s my clusters ...
 	logger.Info("Looking for kubernetes...")
-	clientSet, err := kubernetes.GetClient()
+	clientSet, err := kubernetes.GetClient(cosignConfig.KubeConfig)
 	if err != nil {
 		panic(err)
 	}
